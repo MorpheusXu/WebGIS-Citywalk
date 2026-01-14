@@ -1,0 +1,1885 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>广州 Citywalk 探索地图</title>
+    
+    <!-- 1. 高德地图安全密钥配置 -->
+    <script type="text/javascript">
+        window._AMapSecurityConfig = {
+            securityJsCode: '4ad752191a1c13e1cf88afc15331a86f', // 您的安全密钥
+        };
+    </script>
+    <!-- 2. 加载高德地图 JS API (新增 DistrictSearch 插件) -->
+    <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=c57cf8a4b95a1847b6d064a92386765e&plugin=AMap.AutoComplete,AMap.PlaceSearch,AMap.DistrictSearch"></script>
+
+    <!-- Mapbox 样式 -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Mapbox JS -->
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+    
+    <style>
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; overflow: hidden; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        
+        /* 玻璃拟态卡片 */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: saturate(180%) blur(20px);
+            -webkit-backdrop-filter: saturate(180%) blur(20px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+        }
+
+        /* 滚动条美化 */
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background-color: rgba(0,0,0,0.2); border-radius: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background-color: rgba(0,0,0,0.3); }
+        
+        /* Mapbox 弹窗优化 */
+        .mapboxgl-popup-content {
+            border-radius: 12px;
+            padding: 0;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+            font-family: -apple-system, sans-serif;
+            border: none;
+            max-width: 260px;
+            overflow: hidden;
+        }
+        .mapboxgl-popup-close-button { display: none; }
+        .popup-img { width: 100%; height: 120px; object-fit: cover; display: block; }
+        .popup-content { padding: 12px; position: relative; }
+        
+        /* 搜索点/编辑点弹窗的删除按钮 */
+        .popup-delete-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            color: #9CA3AF;
+            background: transparent;
+            width: 20px;
+            height: 20px;
+            text-align: center;
+            line-height: 18px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            z-index: 10;
+            transition: color 0.2s;
+        }
+        .popup-delete-btn:hover { color: #4B5563; }
+
+        /* 标记样式 */
+        .marker-container {
+            cursor: pointer;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: none !important; 
+        }
+        .marker-container:hover { z-index: 20; }
+
+        .marker-start-inner {
+            background-color: #007AFF;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 4px 10px rgba(0,122,255,0.4);
+            transition: transform 0.2s;
+        }
+        .marker-container:hover .marker-start-inner { transform: scale(1.4); }
+
+        .marker-custom-start-inner {
+            background-color: #AF52DE;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 4px 10px rgba(175, 82, 222, 0.4);
+            transition: transform 0.2s;
+        }
+        .marker-container:hover .marker-custom-start-inner { transform: scale(1.4); }
+
+        .marker-waypoint-inner {
+            background-color: #FF3B30;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 2px 8px rgba(255,59,48,0.4);
+            transition: transform 0.2s;
+        }
+        .marker-container.active .marker-waypoint-inner { background-color: #007AFF; transform: scale(1.6); box-shadow: 0 0 0 4px rgba(0,122,255,0.3); }
+
+        /* 聚类簇标记 (K-Means 结果 - 景点) */
+        .marker-cluster-inner {
+            background-color: #F59E0B; /* 琥珀色 */
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 12px;
+            animation: bounceIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        
+        /* 聚类簇标记 (K-Means 结果 - 路线) */
+        .marker-cluster-route-inner {
+            background-color: #8B5CF6; /* 紫色 */
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 13px;
+            animation: bounceIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes bounceIn { from { transform: scale(0); } to { transform: scale(1); } }
+
+        .marker-search-inner {
+            background-color: #FF9500;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 2px 8px rgba(255, 149, 0, 0.4);
+        }
+
+        .marker-editing-inner {
+            background-color: #34C759;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 2px 8px rgba(52, 199, 89, 0.4);
+            transition: transform 0.2s;
+        }
+        .marker-container.active-edit .marker-editing-inner {
+             background-color: #007AFF; transform: scale(1.4); box-shadow: 0 0 0 3px rgba(0,122,255,0.3);
+        }
+
+        .marker-dragging-inner {
+            background-color: #FFD60A;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 0 15px #FFD60A;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.2); } 100% { transform: scale(1); } }
+
+        .search-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border-radius: 0 0 12px 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 50;
+            border: 1px solid rgba(0,0,0,0.05);
+            margin-top: 4px;
+        }
+
+        .hidden-input { display: none; }
+        
+        .detail-content h3 { font-size: 14px; font-weight: bold; margin-top: 8px; margin-bottom: 4px; color: #333; }
+        .detail-content p { font-size: 13px; line-height: 1.6; color: #555; margin-bottom: 8px; }
+        .detail-content b { font-weight: 700; color: #000; }
+        
+        .lightbox-open { overflow: hidden; }
+        
+        /* 动画 */
+        .animate-fade-in { animation: fadeIn 0.2s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+<div id="app" class="relative w-full h-screen bg-gray-100 font-sans overflow-hidden">
+    <!-- 地图容器 -->
+    <div id="map"></div>
+
+    <!-- 顶部搜索栏 (显示当前城市) -->
+    <div class="absolute top-4 left-1/2 transform -translate-x-1/2 w-full max-w-md px-4 z-30">
+        <div class="relative group shadow-lg rounded-xl">
+            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <svg class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            </div>
+            <input 
+                v-model="searchQuery"
+                @input="handleSearchInput"
+                type="text" 
+                class="block w-full pl-10 pr-16 py-3 border-none rounded-xl leading-5 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-all" 
+                :placeholder="'搜 '+ currentCity +' 地点 (如: ' + (currentCity==='广州' ? '天环广场' : '地标名称') + ')'"
+            >
+            <button class="absolute right-2 top-1.5 bottom-1.5 px-3 bg-blue-500 text-white rounded-lg text-xs font-bold hover:bg-blue-600 transition-colors">
+                搜索
+            </button>
+            
+            <!-- 搜索联想建议 -->
+            <div v-if="searchSuggestions.length > 0" class="search-suggestions custom-scroll">
+                <div v-for="(item, idx) in searchSuggestions" :key="idx" 
+                     @click="selectSuggestion(item)"
+                     class="px-4 py-3 hover:bg-blue-50 cursor-pointer flex items-center border-b border-gray-50 last:border-none transition-colors">
+                    <div class="flex-1">
+                        <div class="text-sm text-gray-800 font-medium">{{ item.name }}</div>
+                        <div class="text-xs text-gray-400 mt-0.5 truncate">{{ item.district }} {{ item.address }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右上角：功能按钮组 -->
+    <div class="absolute top-4 right-4 z-30 flex flex-col items-end space-y-2">
+        <!-- 城市切换器 -->
+        <div class="relative">
+            <button @click="showCitySelector = !showCitySelector; showBaseMapSelector = false;" class="bg-white/90 backdrop-blur shadow-md px-3 py-2 rounded-lg text-sm font-bold text-gray-700 hover:text-blue-600 flex items-center transition-all border border-gray-200">
+                <svg class="w-4 h-4 mr-1 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                {{ currentCity }}
+            </button>
+            <!-- 城市选择面板 -->
+            <div v-if="showCitySelector" class="absolute right-0 top-full mt-2 bg-white rounded-xl shadow-xl p-3 w-48 border border-gray-100 animate-fade-in origin-top-right z-40">
+                <input v-model="cityInput" @keyup.enter="switchCity" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2 placeholder-gray-400" placeholder="输入城市 (如: 杭州)">
+                <button @click="switchCity" class="w-full bg-blue-500 text-white rounded-lg py-1.5 text-xs font-bold hover:bg-blue-600 transition-colors shadow-sm">
+                    切换城市
+                </button>
+            </div>
+        </div>
+
+        <!-- 底图切换器 (新增) -->
+        <div class="relative">
+            <button @click="showBaseMapSelector = !showBaseMapSelector; showCitySelector = false;" class="bg-white/90 backdrop-blur p-2 rounded-lg shadow-md text-gray-600 hover:text-blue-600 transition-all border border-gray-200" title="切换地图风格">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>
+            </button>
+            <!-- 底图选择列表 -->
+            <div v-if="showBaseMapSelector" class="absolute right-0 top-full mt-2 bg-white rounded-xl shadow-xl p-2 w-40 border border-gray-100 animate-fade-in origin-top-right z-40">
+                <div v-for="(mapStyle, idx) in baseMaps" :key="idx" 
+                     @click="switchBaseMap(idx)"
+                     class="px-3 py-2 hover:bg-blue-50 rounded-lg cursor-pointer text-xs font-medium text-gray-700 flex items-center justify-between group transition-colors"
+                     :class="{'bg-blue-50 text-blue-600': currentMapStyleIndex === idx}">
+                    <span>{{ mapStyle.name }}</span>
+                    <span v-if="currentMapStyleIndex === idx" class="w-2 h-2 rounded-full bg-blue-500"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 恢复出厂设置按钮 -->
+        <button @click="resetToFactorySettings" class="bg-white/90 backdrop-blur p-2 rounded-lg shadow-md text-gray-500 hover:text-red-600 hover:bg-red-50 transition-all border border-gray-200" title="恢复出厂设置">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+        </button>
+    </div>
+
+    <!-- 左侧主面板 (自适应高度) -->
+    <div class="absolute top-4 left-4 w-96 max-h-[calc(100vh-32px)] glass-panel rounded-2xl flex flex-col z-20 overflow-hidden transition-all duration-300 shadow-2xl" 
+         :class="{'translate-x-0': showSidebar, '-translate-x-[120%]': !showSidebar}">
+        
+        <!-- 1. 顶部标题 (固定) -->
+        <div class="p-4 border-b border-gray-200/50 flex justify-between items-center bg-white/40 flex-shrink-0">
+            <div>
+                <h1 class="text-xl font-bold text-gray-900 tracking-tight">{{ currentCity }} Citywalk</h1>
+                <p v-if="!isCustomMode" class="text-xs text-gray-500 mt-0.5">探索城市的角落</p>
+                <p v-else class="text-xs text-green-600 font-medium mt-0.5">编辑模式</p>
+            </div>
+            
+            <button @click="toggleCustomMode" 
+                    class="text-xs px-3 py-1.5 rounded-full transition-colors font-medium border"
+                    :class="isCustomMode ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'">
+                {{ isCustomMode ? '退出编辑' : '创建/编辑' }}
+            </button>
+        </div>
+
+        <!-- 2. 中间内容区 -->
+        <div class="overflow-y-auto custom-scroll min-h-0 bg-white/30 flex-1">
+            
+            <!-- A. 路线列表 (浏览模式) -->
+            <div v-if="!currentRoute && !isCustomMode" class="p-3 space-y-4">
+                <!-- 官方推荐 -->
+                <div>
+                    <div class="flex justify-between items-center px-2 mb-2">
+                        <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">官方精选</h3>
+                        <button @click="exportAllData" class="text-[10px] text-blue-500 hover:text-blue-700 font-bold border border-blue-200 rounded px-2 py-0.5 bg-blue-50">
+                            导出数据 (JSON)
+                        </button>
+                    </div>
+                    <div class="space-y-2">
+                        <div v-for="(route, index) in routes" :key="route.route_id" 
+                             class="group p-3 rounded-xl bg-white/60 hover:bg-white cursor-pointer transition-all border border-transparent hover:border-blue-200 shadow-sm hover:shadow-md flex justify-between items-center">
+                            <div @click="selectRoute(route)" class="flex-1">
+                                <div class="flex items-center mb-1">
+                                    <span class="text-[10px] font-bold text-blue-500 bg-blue-50 px-2 py-0.5 rounded-md">Route {{ index + 1 }}</span>
+                                </div>
+                                <h3 class="text-sm font-bold text-gray-800 leading-tight mb-1">{{ route.route_name.split('：')[0] }}</h3>
+                                <p class="text-xs text-gray-500 line-clamp-1">{{ route.theme }}</p>
+                            </div>
+                            <button @click.stop="editOfficialRoute(index)" class="p-2 text-gray-300 hover:text-blue-500 transition-colors" title="编辑详情 (本地)">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 我的自定义 -->
+                <div v-if="savedRoutes.length > 0">
+                    <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 px-2 border-t border-gray-200 pt-4">我的自定义路线</h3>
+                    <div class="space-y-2">
+                        <div v-for="(route, index) in savedRoutes" :key="route.route_id" 
+                             class="group p-3 rounded-xl bg-white/60 hover:bg-white cursor-pointer transition-all border border-transparent hover:border-purple-200 shadow-sm hover:shadow-md flex justify-between items-center">
+                            <div @click="selectRoute(route)" class="flex-1 cursor-pointer">
+                                <div class="flex items-center mb-1">
+                                    <span class="text-[10px] font-bold text-purple-500 bg-purple-50 px-2 py-0.5 rounded-md">我的 {{ index + 1 }}</span>
+                                </div>
+                                <h3 class="text-sm font-bold text-gray-800 leading-tight">{{ route.route_name }}</h3>
+                                <p class="text-xs text-gray-500 mt-1">{{ route.waypoints.length }} 个途经点</p>
+                            </div>
+                            <div class="flex items-center space-x-1">
+                                <button @click.stop="editSavedRoute(index)" class="p-2 text-gray-400 hover:text-blue-500 transition-colors" title="编辑">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                </button>
+                                <button @click.stop="deleteSavedRoute(index)" class="p-2 text-gray-400 hover:text-red-500 transition-colors" title="删除">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div v-if="savedRoutes.length === 0" class="text-center py-4 text-xs text-gray-400">
+                    暂无自定义路线，点击右上角“创建”
+                </div>
+            </div>
+
+            <!-- B. 路线详情 & 导航 (浏览模式) -->
+            <div v-else-if="currentRoute && !isCustomMode">
+                <div class="px-4 py-3 border-b border-gray-200/50 flex items-center bg-white/60 sticky top-0 z-10 backdrop-blur">
+                    <button @click="exitRoute" class="mr-3 p-1.5 rounded-full hover:bg-gray-200 transition-colors text-gray-600">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    </button>
+                    <div class="flex-1 min-w-0">
+                        <h2 class="text-sm font-bold text-gray-900 truncate">{{ currentRoute.route_name.split('：')[0] }}</h2>
+                    </div>
+                    <div class="flex bg-gray-200/80 rounded-lg p-0.5 ml-2">
+                        <button @click="activeTab = 'details'" class="px-3 py-1 text-xs rounded-md transition-all font-medium" :class="activeTab === 'details' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'">景点</button>
+                        <button @click="activeTab = 'nav'" class="px-3 py-1 text-xs rounded-md transition-all font-medium" :class="activeTab === 'nav' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'">导航</button>
+                    </div>
+                </div>
+                
+                <!-- B1. 景点详情列表 -->
+                <div v-show="activeTab === 'details'" class="p-4 space-y-4">
+                    <div v-for="(point, idx) in currentRoute.waypoints" :key="idx" 
+                         :id="'waypoint-item-'+idx"
+                         class="bg-white/80 rounded-xl p-4 shadow-sm border border-transparent transition-all duration-300 cursor-pointer"
+                         :class="{'ring-2 ring-blue-500 bg-white': activePointIndex === idx}"
+                         @click="flyToPointAndPopup(idx)">
+                        
+                        <div class="flex items-center mb-2">
+                            <div class="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-bold mr-2">{{ idx + 1 }}</div>
+                            <h4 class="text-base font-bold text-gray-800">{{ point.name }}</h4>
+                        </div>
+                        
+                        <p class="text-xs text-gray-500 mb-2 italic">{{ point.story_snip || point.note }}</p>
+                        
+                        <div v-if="activePointIndex === idx" class="mt-3 border-t border-gray-100 pt-3 animation-fade-in">
+                            <div v-if="point.description" class="detail-content text-sm text-gray-700 mb-3 whitespace-pre-wrap" v-html="point.description"></div>
+                            <img v-if="point.image && !point.image.includes('【')" 
+                                 :src="point.image" 
+                                 class="w-full h-auto max-h-80 object-contain bg-gray-50 rounded-lg shadow-md border border-gray-100 cursor-zoom-in"
+                                 @click.stop="openLightbox(point.image)"
+                                 title="点击查看大图">
+                            <div v-else-if="point.image && point.image.includes('【')" class="text-xs text-gray-400 text-center py-2 bg-gray-50 rounded border border-dashed border-gray-200">{{ point.image }}</div>
+                            <div v-if="!point.description && !point.image" class="text-xs text-gray-400 text-center py-2">暂无详细介绍图片</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- B2. 导航指引 -->
+                <div v-show="activeTab === 'nav'">
+                    <div v-if="navigationSteps.length > 0">
+                        <div class="p-3 bg-blue-50 text-blue-800 text-xs font-medium text-center border-b border-blue-100">
+                            全程约 {{ (routeDistance / 1000).toFixed(1) }} 公里 • 步行约 {{ Math.round(routeDuration / 60) }} 分钟
+                        </div>
+                        <div class="divide-y divide-gray-100 pb-4">
+                            <div v-for="(step, idx) in navigationSteps" :key="idx" class="p-4 hover:bg-white transition-colors flex items-start">
+                                <div class="mr-3 mt-0.5 text-gray-400">
+                                    <svg class="w-5 h-5" :class="getTurnIconClass(step.maneuver.modifier)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" v-if="step.maneuver.modifier && step.maneuver.modifier.includes('right')"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" v-else-if="step.maneuver.modifier && step.maneuver.modifier.includes('left')"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" v-else></path>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <p class="text-sm text-gray-800">{{ step.maneuver.instruction }}</p>
+                                    <p class="text-xs text-gray-400 mt-1" v-if="step.distance > 0">{{ Math.round(step.distance) }} 米</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="flex items-center justify-center h-40 text-gray-400 text-sm flex-col">
+                        <svg class="w-8 h-8 mb-2 animate-spin text-blue-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        正在规划步行路线...
+                    </div>
+                </div>
+            </div>
+
+            <!-- C. 编辑模式列表 -->
+            <div v-else-if="isCustomMode" class="p-3 space-y-2">
+                <div class="p-4 bg-green-50/80 border-b border-green-100 rounded-lg mb-2">
+                    <input v-model="customRouteName" class="bg-transparent text-sm font-bold text-green-900 border-b border-green-300 w-full focus:outline-none placeholder-green-700/50 mb-1" placeholder="为你的路线命名...">
+                    <p v-if="editingOfficial" class="text-xs text-orange-600 bg-orange-100 inline-block px-1 rounded">正在编辑官方路线副本</p>
+                    <p v-else class="text-xs text-green-600">搜索或双击地图添加点位 (系统自动计算平滑路径)</p>
+                </div>
+
+                <div v-if="customWaypoints.length === 0" class="text-center py-10 text-gray-400 text-sm border-2 border-dashed border-gray-300 rounded-xl">
+                    暂无点位<br>请在地图上操作
+                </div>
+                <div v-for="(wp, idx) in customWaypoints" :key="wp.id || idx" 
+                     :id="'edit-item-'+idx"
+                     class="flex flex-col bg-white p-2 rounded-lg shadow-sm border border-gray-100 group transition-all duration-200"
+                     :class="{'ring-2 ring-blue-500': activePointIndex === idx}">
+                    <!-- 上部分：序号、名称、操作 -->
+                    <div class="flex items-center mb-1">
+                        <div class="w-5 h-5 rounded-full bg-green-500 text-white flex items-center justify-center text-xs font-bold mr-2 flex-shrink-0">{{ idx + 1 }}</div>
+                        <input v-model="wp.name" class="flex-1 text-sm font-medium text-gray-800 bg-transparent border-none focus:ring-0 p-0 placeholder-gray-400" placeholder="点击命名...">
+                        
+                        <!-- 排序与删除 -->
+                        <div class="flex items-center space-x-1 ml-1">
+                            <button @click="movePoint(idx, -1)" :disabled="idx === 0" class="text-gray-300 hover:text-blue-500 disabled:opacity-0 p-0.5"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg></button>
+                            <button @click="movePoint(idx, 1)" :disabled="idx === customWaypoints.length - 1" class="text-gray-300 hover:text-blue-500 disabled:opacity-0 p-0.5"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg></button>
+                            <button @click="removeCustomPoint(idx)" class="text-gray-300 hover:text-red-500 p-0.5 ml-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+                        </div>
+                    </div>
+                    
+                    <!-- 下部分：备注、详细内容、图片 -->
+                    <div class="pl-7 space-y-2">
+                        <input v-model="wp.note" class="w-full text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded px-1 py-1 focus:outline-none focus:bg-white" placeholder="简短备注 (显示在弹窗)...">
+                        
+                        <textarea v-model="wp.description" rows="2" class="w-full text-xs text-gray-600 bg-gray-50 border border-gray-100 rounded px-1 py-1 focus:outline-none focus:bg-white resize-none" placeholder="详细介绍..."></textarea>
+                        
+                        <div class="flex items-center space-x-2">
+                            <label class="cursor-pointer text-[10px] text-blue-500 hover:text-blue-700 bg-blue-50 px-2 py-0.5 rounded flex items-center">
+                                <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                                {{ wp.image ? '更换图片' : '上传图片' }}
+                                <input type="file" accept="image/*" class="hidden-input" @change="(e) => handleImageUpload(e, wp)">
+                            </label>
+                            
+                            <button @click="startRelocatePoint(idx)" class="text-[10px] text-orange-500 hover:text-orange-700 bg-orange-50 px-2 py-0.5 rounded flex items-center">
+                                <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                                修改定位
+                            </button>
+                        </div>
+                        
+                        <div v-if="wp.image" class="relative mt-1 w-full h-24 group/img">
+                            <img v-if="!wp.image.includes('【')" :src="wp.image" class="w-full h-full object-cover rounded border border-gray-200">
+                            <div v-else class="w-full h-full flex items-center justify-center bg-gray-50 text-xs text-gray-400 border border-dashed rounded">{{wp.image}}</div>
+                            <button @click="wp.image = null" class="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] opacity-0 group-hover/img:opacity-100 transition-opacity">×</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. 底部固定按钮区 (仅在编辑模式显示) -->
+        <div v-if="isCustomMode" class="p-4 border-t border-gray-200/50 bg-white/95 backdrop-blur-md flex-shrink-0 z-10 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] space-y-2 mt-auto">
+            <!-- 修改位置时的特殊提示 -->
+            <div v-if="relocatingIndex !== -1" class="bg-orange-50 border border-orange-200 rounded-lg p-2 mb-2">
+                <p class="text-xs font-bold text-orange-800 mb-1 text-center">点击地图选择新位置</p>
+                <div class="flex space-x-2">
+                    <button @click="cancelRelocate" class="flex-1 py-1.5 bg-gray-200 text-gray-700 rounded text-xs font-bold">取消</button>
+                    <button @click="confirmRelocate" class="flex-1 py-1.5 bg-orange-500 text-white rounded text-xs font-bold">确认</button>
+                </div>
+            </div>
+            
+            <div v-else class="space-y-2">
+                <button @click="generateCustomRoutePreview" 
+                        :disabled="customWaypoints.length < 2"
+                        class="w-full py-2 rounded-xl text-sm font-bold shadow-sm transition-all flex items-center justify-center space-x-2 border border-green-200 text-green-700 bg-green-50 hover:bg-green-100 disabled:opacity-50">
+                    <span>预览路径</span>
+                </button>
+                <button @click="saveCustomRoute" 
+                        :disabled="customWaypoints.length < 2"
+                        class="w-full py-3 rounded-xl text-sm font-bold shadow-lg transition-all flex items-center justify-center space-x-2"
+                        :class="customWaypoints.length < 2 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-green-500 text-white hover:bg-green-600 hover:shadow-green-500/30'">
+                    <span>保存路线</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 移动端切换按钮 -->
+    <button @click="showSidebar = !showSidebar" class="absolute top-4 right-4 z-30 bg-white p-3 rounded-full shadow-lg text-gray-700 md:hidden">
+        <svg v-if="!showSidebar" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+        <svg v-else class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+    </button>
+
+    <!-- 大图查看器 -->
+    <div v-if="lightboxVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-95 backdrop-blur-sm transition-opacity" @click="closeLightbox">
+        <button class="absolute top-6 right-6 text-white hover:text-gray-300 transition-colors p-2" @click="closeLightbox">
+            <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+        <img :src="lightboxImgSrc" class="max-w-full max-h-full object-contain p-4 shadow-2xl" @click.stop>
+    </div>
+</div>
+
+<script>
+    const { createApp, ref, onMounted, nextTick } = Vue;
+
+    // ==========================================
+    // 核心算法库 (高含金量部分)
+    // ==========================================
+
+    /**
+     * 算法一：Catmull-Rom 样条插值 (平滑路径生成)
+     * 用于在编辑模式下实时生成平滑的预估路径，无需等待后端 API
+     */
+    function catmullRomSpline(points) {
+        if (points.length < 2) return [];
+        const result = [];
+        // 为了算法需要，我们在首尾各补充一个虚拟点
+        const p = points.map(pt => ({x: pt.lng, y: pt.lat}));
+        const cp = [p[0], ...p, p[p.length - 1]]; 
+        
+        for (let i = 0; i < cp.length - 3; i++) {
+            // t 步长越小，曲线越平滑。这里 0.1 意味着两点间插入 10 个点
+            for (let t = 0; t <= 1; t += 0.1) {
+                const p0 = cp[i], p1 = cp[i+1], p2 = cp[i+2], p3 = cp[i+3];
+                // Catmull-Rom 公式
+                const x = 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t * t + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t * t * t);
+                const y = 0.5 * ((2 * p1.y) + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t * t + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t * t * t);
+                result.push([x, y]);
+            }
+        }
+        // 确保终点被包含
+        result.push([p[p.length-1].x, p[p.length-1].y]);
+        return result;
+    }
+
+    /**
+     * 算法二：Convex Hull 凸包算法 (Graham Scan / Monotone Chain 变体)
+     * 用于计算点集的最小外包多边形，实现智能缩放和区域覆盖识别
+     */
+    function convexHull(points) {
+        if (points.length < 3) return points.map(p => [p.lng, p.lat]);
+        // 1. 按经度排序
+        const sorted = points.map(p => ({lng: p.lng, lat: p.lat})).sort((a, b) => a.lng - b.lng || a.lat - b.lat);
+        
+        // 叉积计算：判断方向
+        const cross = (o, a, b) => (a.lng - o.lng) * (b.lat - o.lat) - (a.lat - o.lat) * (b.lng - o.lng);
+        
+        // 2. 构建下凸壳
+        const lower = [];
+        for (let p of sorted) {
+            while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+            lower.push(p);
+        }
+        
+        // 3. 构建上凸壳
+        const upper = [];
+        for (let i = sorted.length - 1; i >= 0; i--) {
+            const p = sorted[i];
+            while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+            upper.push(p);
+        }
+        
+        // 4. 合并 (移除重复的首尾点)
+        upper.pop(); lower.pop();
+        return lower.concat(upper).map(p => [p.lng, p.lat]);
+    }
+
+    /**
+     * 算法三：K-Means 聚类算法 (空间点聚合)
+     * 用于地图制图综合，当缩小比例尺时自动将临近点聚合
+     */
+    function kMeans(points, k) {
+        if (points.length < k) return null;
+        
+        // 初始化：简单选取前 k 个点作为质心
+        let centroids = points.slice(0, k).map(p => ({lng: p.lng, lat: p.lat}));
+        let assignments = new Array(points.length).fill(0);
+        let iterations = 0;
+        const MAX_ITER = 20;
+        
+        while(iterations < MAX_ITER) {
+            let changed = false;
+            // E 步：分配点到最近的质心
+            for(let i=0; i<points.length; i++) {
+                let minDist = Infinity;
+                let cluster = 0;
+                for(let c=0; c<k; c++) {
+                    const dist = Math.sqrt(Math.pow(points[i].lng - centroids[c].lng, 2) + Math.pow(points[i].lat - centroids[c].lat, 2));
+                    if(dist < minDist) { minDist = dist; cluster = c; }
+                }
+                if(assignments[i] !== cluster) { assignments[i] = cluster; changed = true; }
+            }
+            if(!changed) break; // 收敛
+            
+            // M 步：更新质心位置
+            for(let c=0; c<k; c++) {
+                let sumLng = 0, sumLat = 0, count = 0;
+                for(let i=0; i<points.length; i++) {
+                    if(assignments[i] === c) { sumLng += points[i].lng; sumLat += points[i].lat; count++; }
+                }
+                if(count > 0) { centroids[c] = {lng: sumLng/count, lat: sumLat/count}; }
+            }
+            iterations++;
+        }
+        return { centroids, assignments };
+    }
+
+    // --- 坐标转换工具 (GCJ02 -> WGS84) ---
+    const PI = 3.1415926535897932384626;
+    const a = 6378245.0;
+    const ee = 0.00669342162296594323;
+    function transformLat(x, y) {
+        let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+        ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+        ret += (20.0 * Math.sin(y * PI) + 40.0 * Math.sin(y / 3.0 * PI)) * 2.0 / 3.0;
+        ret += (160.0 * Math.sin(y / 12.0 * PI) + 320 * Math.sin(y * PI / 30.0)) * 2.0 / 3.0;
+        return ret;
+    }
+    function transformLon(x, y) {
+        let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+        ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+        ret += (20.0 * Math.sin(x * PI) + 40.0 * Math.sin(x / 3.0 * PI)) * 2.0 / 3.0;
+        ret += (150.0 * Math.sin(x / 12.0 * PI) + 300.0 * Math.sin(x / 30.0 * PI)) * 2.0 / 3.0;
+        return ret;
+    }
+    function gcj02towgs84(lng, lat) {
+        if (outOfChina(lng, lat)) return [lng, lat];
+        let dlat = transformLat(lng - 105.0, lat - 35.0);
+        let dlng = transformLon(lng - 105.0, lat - 35.0);
+        let radlat = lat / 180.0 * PI;
+        let magic = Math.sin(radlat);
+        magic = 1 - ee * magic * magic;
+        let sqrtmagic = Math.sqrt(magic);
+        dlat = (dlat * 180.0) / ((a * (1 - ee)) / (magic * sqrtmagic) * PI);
+        dlng = (dlng * 180.0) / (a / sqrtmagic * Math.cos(radlat) * PI);
+        const mglat = lat + dlat;
+        const mglng = lng + dlng;
+        return [lng * 2 - mglng, lat * 2 - mglat];
+    }
+    function outOfChina(lng, lat) {
+        return (lng < 72.004 || lng > 137.8347) || (lat < 0.8293 || lat > 55.8271);
+    }
+
+    // --- 官方路线数据 (更新后的数据) ---
+    const ROUTE_DATA = [
+    {
+      "route_id": "dongshankou",
+      "route_name": "东山口文艺路线：旧时光与新潮流",
+      "theme": "历史建筑，文艺打卡",
+      "waypoints": [
+        {
+          "name": "东山湖公园",
+          "story_snip": "闹市绿洲，湖心九曲桥。",
+          "description": "东山湖公园位于广州市越秀区东湖路，是广州市四大人工湖公园之一。公园始建于1958年，由群众义务劳动建设而成，1959年正式开放。园内以35.5万平方米湖面为核心，分布着4个半岛和2个小岛，通过九曲桥、拱桥等特色桥梁相连，形成独特的园林景观。1963年\"东湖春晓\"入选羊城八景，2024年入选广州市第一批永久保护绿地名录。公园绿树婆娑、繁花似锦，设有垂钓区、划艇区等休闲设施，春秋两季举办大型花展，是市民休闲游览的好去处。",
+          "image": "images/ScreenShot_2025-12-14_163032_424.png",             
+          "lat": 23.1207,
+          "lng": 113.2929
+        },
+        {
+          "name": "新河浦路",
+          "story_snip": "红砖洋楼，广州鼓浪屿。",
+          "description": "新河浦路位于广州市越秀区，是广州\"东山小洋楼\"建筑群的核心区域。这条道路北侧是一排排清水红砖洋楼，南侧紧邻新河浦涌，绿树成荫、环境清幽。民国时期，这里曾是华侨、富商和政要的聚居地，形成了广州现存规模最大的中西结合低层院落式近代建筑群。道路沿线分布着春园、简园、逵园等著名侨园，建筑以清水红砖墙、罗马拱券门廊为特色，融合了西洋古典风格与岭南装饰元素。如今，新河浦路已成为广州历史文化街区的代表，部分老建筑被改造为咖啡馆、艺术馆等文化空间，成为市民休闲游览的打卡地。",
+          "image": "images/ScreenShot_2025-12-14_163120_494.png",
+          "lat": 23.1252,
+          "lng": 113.2951
+        },
+        {
+          "name": "柏园",
+          "story_snip": "民国风情，历史名园。",
+          "description": "柏园位于广州市越秀区恤孤院路12号，始建于1923年，是广州现存规模较大的民国住宅建筑。建筑为三层砖混结构，采用中西结合风格，清水红砖外墙配以伊斯兰风格拱券门廊、爱奥尼柱式门廊和雕花栏杆，呈现出浓郁的西洋古典主义特色。1928年10月，国立中央研究院历史语言研究所在此正式成立，这是中国第一个以历史学、考古学、语言学为主要研究方向的国立研究机构，傅斯年、顾颉刚、赵元任等学术大家曾在此工作，奠定了中国现代人文科学的基础。2018年柏园被列为广州市历史建筑，2022年入选广东省文物保护单位，现已成为集历史展示、文化沙龙于一体的文化空间，向公众开放。",
+          "image": "images/ScreenShot_2025-12-14_163713_136.png",
+          "lat": 23.1271,
+          "lng": 113.2958
+        },
+        {
+          "name": "恤孤院路",
+          "story_snip": "文艺咖啡馆聚集地。",
+          "description": "恤孤院路位于广州市越秀区新河浦历史文化街区，北接庙前直街与烟墩路交汇处，南至新河浦路，全长约375米。因1920年两广浸信会在此建华侨住宅区时邻近恤孤院而得名。这里是中共三大会址所在地，1923年6月中国共产党第三次全国代表大会在此召开，见证了中国革命的重要历史时刻。道路沿线现存民国时期西式洋楼群，包括柏园、逵园、春园、简园等历史建筑，其中柏园为国立中央研究院历史语言研究所旧址，是中国现代人文科学的发源地之一。街区以红砖洋楼为主，绿树成荫，环境清幽，是广州重要的历史文化保护街区。",
+          "image": "images/ScreenShot_2025-12-14_163803_971.png",
+          "lat": 23.1278,
+          "lng": 113.2942
+        },
+        {
+          "name": "基督教东山堂",
+          "story_snip": "宏伟的哥特式教堂。",
+          "description": "基督教东山堂位于广州市越秀区寺贝通津9号，始建于1909年，是广州规模最大的基督教堂。教堂原名为东山浸信会堂，由美国传教士创建，建筑采用哥特式风格，为两层钢筋混凝土结构，占地3300平方米，主堂可容纳1300人聚会。1999年被列为广州市文物保护单位。教堂融合中西建筑美学，红砖外墙与尖顶相映成趣，彩色玻璃窗在阳光下折射出神圣光芒。1979年成为广州市首间恢复宗教活动的教堂，每周日举行主日崇拜，设有礼拜堂、副堂、主日学堂等设施，是东山口地区重要的历史文化地标。",
+          "image": "images/ScreenShot_2025-12-14_163913_024.png",
+          "lat": 23.1306,
+          "lng": 113.2955
+        },
+      ]
+    },
+    {
+      "route_id": "zhujiang",
+      "route_name": "珠江新城：现代都市中轴线",
+      "theme": "现代都市，建筑地标，城市规划",
+      "waypoints": [
+        {
+          "name": "天环广场",
+          "story_snip": "双鲤鱼造型的购物地标。",
+          "description": "天环广场（Parc Central）位于广州市天河区天河路218号，是珠江新城CBD的核心地标之一。其设计灵感源自中国传统文化中象征吉祥的“双鲤鱼”造型，被誉为“太极双鲤，鱼跃天河”。作为由新鸿基地产开发的高端商业项目，它突破了传统“盒子”式商场的模式，采用开放式花园设计，将零售、交通枢纽与城市空间完美融合，营造出公园般的购物体验，是广州现代商业地标的代表",
+          "image": "images/ScreenShot_2025-12-15_103706_306.jpg",             
+          "lat": 23.134914,
+          "lng": 113.319475
+        },
+        {
+          "name": "花城广场",
+          "story_snip": "广州的城市客厅。",
+          "description": "花城广场是广州市最大的城市广场，被誉为“城市客厅”。它位于珠江新城核心区，占地面积约56万平方米，周边环绕着广州图书馆、大剧院、省博物馆等39座文化地标。广场不仅拥有广阔的绿地和浮岛湖，更是广州国际灯光节等重大活动的举办地，地下空间四通八达，集观光、休闲、娱乐功能于一体，是展示广州现代化都市形象的重要窗口",
+          "image": "images/ScreenShot_2025-12-15_103919_309.jpg",             
+          "lat": 23.123385,
+          "lng": 113.319213
+        },
+        {
+          "name": "海心沙亚运公园",
+          "story_snip": "亚运会开闭幕式旧址。",
+          "description": "海心沙亚运公园是2010年广州亚运会开闭幕式的举办地，坐落于珠江上的海心沙岛。公园保留了亚运主看台、巨型帆屏、火炬塔等标志性设施，占地面积约17.6万平方米。如今，它已转型为集文化、旅游、休闲于一体的市民公园和大型活动场地，每晚都会上演大型表演，通过APM线海心沙站便捷可达，是感受亚运遗产和城市活力的重要场所",
+          "image": "images/ScreenShot_2025-12-15_103740_243.jpg",             
+          "lat": 23.114155,
+          "lng": 113.318977
+        },
+        {
+          "name": "二沙岛",
+          "story_snip": "艺术氛围浓厚的江心岛。",
+          "description": "二沙岛是位于广州市中心珠江河段上的一个江心绿洲，面积约1.76平方公里，绿化率超过50%。岛上艺术氛围浓厚，汇聚了星海音乐厅、广东美术馆等高端文化场馆，并拥有发展公园、传祺公园等多个公共绿地。这里环境幽静，被誉为“珠江第一岛”，环岛建有7.3公里的碧道，是市民休闲散步、享受自然与艺术熏陶的理想之地",
+          "image": "images/ScreenShot_2025-12-15_104002_345.jpg",             
+          "lat": 23.112957,
+          "lng": 113.312959
+        },
+        {
+          "name": "海心桥",
+          "story_snip": "网红步行桥，连接两岸。",
+          "description": "海心桥是世界跨度最大的曲梁斜拱人行桥，南连广州塔，北接二沙岛和珠江新城，全长488米。其设计融入了岭南文化元素，桥形如粤剧水袖飘逸，桥拱似古琴典雅。桥上设有遮阳雨棚、清凉喷雾等便民设施，不仅是便捷的过江通道，更成为观赏珠江夜景的网红打卡点，是广州城市中轴线上的新地标",
+          "image": "images/ScreenShot_2025-12-15_104027_598.jpg",             
+          "lat": 23.110686,
+          "lng": 113.313588
+        },
+        {
+          "name": "广州塔",
+          "story_snip": "地标小蛮腰，俯瞰全城。",
+          "description": "广州塔昵称“小蛮腰”，塔高约600米，是广州最具标志性的城市地标。游客可登塔俯瞰全城景色，塔内设有观光层、极速云霄等游乐项目。夜幕降临时，塔身灯光变幻，与珠江新城夜景交相辉映，构成了广州最动人的天际线。目前，广州塔旅游区正致力于打造文旅商融合发展的特色旅游目的地",
+          "image": "images/ScreenShot_2025-12-15_104108_503.jpg",             
+          "lat": 23.108971,
+          "lng": 113.319149
+        },
+        {
+          "name": "珠江琶醍",
+          "story_snip": "啤酒与夜景的狂欢。",
+          "description": "珠江琶醍啤酒文化创意艺术区由原来的珠江啤酒厂改造而成，是广州知名的夜生活地标。它位于磨碟沙大街，完美结合了工业遗产与现代时尚。这里汇集了众多特色餐厅、酒吧和创意店铺，游客可以在此品尝鲜酿啤酒，欣赏璀璨的江景和广州塔的夜景，享受啤酒与夜景带来的狂欢体验",
+          "image":"images/ScreenShot_2025-12-15_104134_978.jpg",             
+          "lat": 23.109308,
+          "lng": 113.334890
+        }
+      ]
+    },
+    {
+      "route_id": "beijing-road",
+      "route_name": "北京路：穿越千年古道",
+      "theme": "历史遗迹，文化深度，传统商业",
+      "waypoints": [
+        {
+          "name": "人民公园",
+          "story_snip": "广州第一公园，城市原点。",
+          "description": "人民公园位于广州市传统中轴线上，建于1921年，是广州最早的综合性公园，被誉为\"广州第一公园\"。公园原址为清代的广东巡抚署，历史底蕴深厚。园内古树参天，绿草如茵，布局典雅，设有音乐亭、喷水池等设施。公园南门广场设有\"广州城市原点\"标志，象征着广州城市的地理中心。人民公园不仅是市民晨练、休闲的好去处，也是举办各类文化活动的重要场所，见证了广州近现代历史的变迁。",
+          "image": "images/ScreenShot_2025-12-15_160653_763.png",
+          "lat": 23.128444,
+          "lng": 113.259013
+        },
+        {
+          "name": "大佛寺",
+          "story_snip": "繁华深处的千年古刹。",
+          "description": "大佛寺位于广州市越秀区惠福东路，始建于南汉时期（公元917-971年），初名新藏寺，明代扩建为龙藏寺，清康熙年间重建并更为现名。寺内供奉三尊铜铸金身大佛，故名大佛寺。大佛寺建筑风格独特，融合了岭南传统建筑与佛教文化元素。近年来复建的弘法大楼（普觉楼）气势恢宏，夜晚灯光亮起时金碧辉煌，酷似电影《千与千寻》中的场景，成为著名的网红打卡点。在繁华的北京路商圈中，大佛寺宛如一片净土，供信众和游客祈福许愿，感受宁静。",
+          "image": "images/ScreenShot_2025-12-15_160738_402.png",
+          "lat": 23.124955,
+          "lng": 113.262664
+        },
+        {
+          "name": "北京路步行街",
+          "story_snip": "千年商都核心。",
+          "description": "北京路步行街位于广州市中心，是广州历史上最繁华的商业集散地，也是广州千年商都的见证。步行街全长约440米，集聚了众多百年老字号、大型百货、时尚品牌和特色美食。街道中央展示着\"千年古道遗址\"，层层叠叠的路面遗迹跨越了唐、宋、元、明、清、民国等多个朝代，展示了广州城市中心两千多年未曾偏移的历史奇迹。漫步北京路，既能享受购物的乐趣，又能领略深厚的历史文化底蕴。",
+          "image": "images/ScreenShot_2025-12-15_160815_683.png",
+          "lat": 23.126037,
+          "lng": 113.263600
+        },
+        {
+          "name": "中山图书馆",
+          "story_snip": "知识的殿堂，古色古香。",
+          "description": "广东省立中山图书馆位于广州市越秀区文明路，是中国著名的公共图书馆之一。其前身可追溯到明代的广雅书局，1912年正式创办，后为纪念孙中山先生而更为现名。图书馆分为保留了民国时期建筑风格的老馆（文德路）和现代化的新馆（文明路）。老馆建筑古色古香，红墙绿瓦，环境清幽，是著名的文物保护单位。馆内藏书丰富，拥有大量珍贵的古籍善本和地方文献。这里不仅是知识的海洋，也是市民和学者进行学术研究、阅读学习的重要场所。",
+          "image": "images/ScreenShot_2025-12-15_160832_532.png",
+          "lat": 23.126892,
+          "lng": 113.265242
+        },
+        {
+          "name": "广东贡院明远楼旧址",
+          "story_snip": "科举文化的历史见证。",
+          "description": "广东贡院明远楼旧址位于广州市越秀区文明路，是清代广东贡院的唯一遗存建筑，现为广东省博物馆（旧馆）的一部分。明远楼始建于清康熙年间，是当年监临官员登临瞭望、警戒考场、发号施令的地方。建筑坐北朝南，为两层木结构楼阁，红墙黄瓦，飞檐翘角，具有典型的岭南古建筑风格。作为中国古代科举制度的见证，明远楼承载着无数古代学子的功名梦想和历史记忆，具有极高的历史文化价值。",
+          "image": "images/ScreenShot_2025-12-15_160850_772.png",
+          "lat": 23.127617,
+          "lng": 113.272064
+        },
+        {
+          "name": "农讲所",
+          "story_snip": "红墙黄瓦，革命圣地。",
+          "description": "广州农民运动讲习所旧址（简称农讲所）位于广州市越秀区中山四路，原为明代修建的番禺学宫（孔庙）。1926年，毛泽东同志在此主办了第六届农民运动讲习所，培养了大批农民运动骨干，为中国革命做出了重要贡献。建筑群坐北朝南，由棂星门、泮池、拱桥、大成门、大成殿等组成，红墙黄瓦，古朴庄重，是广州现存规模最大的古建筑群之一。如今，这里已成为爱国主义教育基地和红色旅游经典景区，游客可以在此缅怀革命先烈，感受红色文化的熏陶。",
+          "image": "images/ScreenShot_2025-12-15_161029_764.png",
+          "lat": 23.129798,
+          "lng": 113.271148
+        }
+      ]
+    },
+    {
+      "route_id": "shamian",
+      "route_name": "沙面风情：欧陆建筑群",
+      "theme": "殖民历史，外滩风情，宗教文化",
+      "waypoints": [
+        {
+          "name": "沙面岛",
+          "story_snip": "露天建筑博物馆。",
+          "description": "沙面岛是广州市荔湾区珠江中的一个小岛，曾是英、法租界，见证了广州近代历史的变迁。岛上保留了大量19世纪末至20世纪初的欧式建筑，包括领事馆、教堂、银行、洋行等，风格多样，有新巴洛克式、仿哥特式、券廊式等，被誉为\"露天建筑博物馆\"。沙面环境优美，古树成荫，江风拂面，生活气息浓厚。漫步在沙面的大街小巷，仿佛穿越回百年前的欧洲，是摄影爱好者和游客休闲散步的绝佳去处。",
+          "image": "images/ScreenShot_2025-12-17_101021_041.png",
+          "lat": 23.109613,
+          "lng": 113.242224
+        },
+        {
+          "name": "人民桥",
+          "story_snip": "连接两岸，风景独好。",
+          "description": "人民桥横跨珠江，连接广州市越秀区和海珠区，是广州重要的交通枢纽之一。大桥建成于1967年，后经多次扩建和改造，不仅改善了交通状况，也增添了许多人性化设计。桥上设有观景平台和垂直电梯，方便市民和游客登桥观光。站在人民桥上，可以饱览珠江两岸的迷人景色，东眺白天鹅宾馆和沙面岛的欧式风情，西望白鹅潭的壮阔江面。傍晚时分，夕阳西下，江景更是美不胜收，是拍摄广州江景的理想机位。",
+          "image": "images/ScreenShot_2025-12-17_101052_456.png",
+          "lat": 23.108319,
+          "lng": 113.245141
+        },
+        {
+          "name": "粤海关博物馆",
+          "story_snip": "大钟楼，海关历史。",
+          "description": "粤海关博物馆位于广州市荔湾区沿江西路29号，馆址为著名的\"大钟楼\"——原粤海关大楼。该建筑建于1916年，是新古典主义风格的代表作，也是中国海关史上现存最早的现代海关建筑之一。大楼顶部的钟楼每天按时鸣钟，钟声洪亮，传遍珠江两岸，是老广州人的集体记忆。博物馆内通过丰富的文物、图片和模型，系统展示了广州海关的发展历史和对外贸易的变迁。夜晚的大钟楼在灯光映衬下更加庄严典雅，是沿江路上一道亮丽的风景线。",
+          "image": "images/ScreenShot_2025-12-17_101218_187.png",
+          "lat": 23.109961,
+          "lng": 113.245725
+        },
+        {
+          "name": "邮政博物馆",
+          "story_snip": "见证邮政百年沧桑。",
+          "description": "广州邮政博物馆位于沿江西路43号，原为广东邮务管理局旧址，建于1916年。这座建筑具有浓郁的欧洲新古典主义风格，外观宏伟大气。博物馆展示了广东乃至中国邮政的发展历程，收藏了大量珍贵的邮票、邮政器具和历史档案。游客在这里可以了解到从古代驿站到现代物流的演变过程。大楼本身也是也是全国重点文物保护单位，其独特的建筑美学吸引了众多建筑爱好者前来参观。",
+          "image": "images/ScreenShot_2025-12-17_101309_012.png",
+          "lat": 23.110365,
+          "lng": 113.246828
+        },
+        {
+          "name": "南方大厦",
+          "story_snip": "曾经的中国第一高楼。",
+          "description": "南方大厦位于广州市荔湾区沿江西路49号，始建于1918年，原名大新公司，是当时中国第一高楼，也是广州第一座钢筋混凝土结构的高层建筑。大厦曾是广州最繁华的商业中心，承载了几代广州人的购物记忆。建筑风格独特，设有空中花园和游乐场，曾是市民娱乐休闲的首选之地。虽然随着城市商业中心的转移，南方大厦的辉煌不再，但它作为广州商业发展史上的里程碑，依然屹立在珠江边，见证着城市的变迁与发展。",
+          "image": "images/ScreenShot_2025-12-17_101346_078.png",
+          "lat": 23.110703,
+          "lng": 113.247535
+        },
+        {
+          "name": "爱群大厦",
+          "story_snip": "经典骑楼建筑。",
+          "description": "爱群大厦（爱群大酒店）位于广州市沿江西路113号，建于1937年，曾是广州最高的建筑，保持了30年之久。大厦建筑风格独特，采用垂直线条的哥特式复兴风格，外观呈熨斗状，雄伟壮观。它不仅是广州的标志性建筑，也是华侨投资建设广州的典范。爱群大酒店曾接待过众多国内外政要和名人，享有盛誉。如今，经过修缮的爱群大厦依然保持着当年的风采，其顶层的旋转餐厅是欣赏珠江夜景的绝佳位置。",
+          "image": "images/ScreenShot_2025-12-17_101415_799.png",
+          "lat": 23.112129,
+          "lng": 113.251537
+        },
+        {
+          "name": "圣心大教堂",
+          "story_snip": "全石结构的哥特式宏伟建筑。",
+          "description": "石室圣心大教堂位于广州市越秀区一德路，是天主教广州教区最宏伟、最具有特色的一间大教堂。教堂建于1863年，历时25年才竣工。它是全球四座全石结构哥特式教堂建筑之一，可与巴黎圣母院相媲美。教堂全部墙壁和柱子都用花岗岩石砌造，故称\"石室\"。其高耸的塔尖、精致的玫瑰花窗和宏大的内部空间，展现了哥特式建筑的精湛工艺。圣心大教堂不仅是宗教信仰的场所，也是建筑艺术的瑰宝，吸引了无数游客前来参观和礼拜。",
+          "image": "images/ScreenShot_2025-12-17_101444_589.png",
+          "lat": 23.117358,
+          "lng": 113.254742
+        },
+        {
+          "name": "海珠广场",
+          "story_snip": "解放纪念像。",
+          "description": "海珠广场位于广州市越秀区，是广州传统中轴线与珠江岸线的交汇点。广场建于1953年，是广州第一座城市广场，也是连接海珠桥的交通枢纽。广场中心矗立着广州解放纪念像，纪念广州解放的历史时刻。海珠广场周边聚集了广州宾馆、华侨大厦等历史建筑，以及缤纷广场等现代商业设施。经过近年来的改造提升，广场环境更加优美，成为市民休闲、聚会和举办大型活动的重要公共空间，夜晚的灯光亮起时更是璀璨夺目。",
+          "image": "images/ScreenShot_2025-12-17_101506_964.png",
+          "lat": 23.116765,
+          "lng": 113.260108
+        }
+      ]
+    },
+    {
+      "route_id": "xiguan",
+      "route_name": "西关风情：老广的烟火气",
+      "theme": "岭南民俗，传统美食，西关大屋",
+      "waypoints": [
+        {
+          "name": "陈家祠",
+          "story_snip": "岭南建筑艺术明珠。",
+          "description": "陈家祠（陈氏书院）位于广州市荔湾区中山七路，始建于清光绪十四年（1888年），是广东现存规模最大、保存最完好、装饰最精美的中国清代宗祠建筑。陈家祠以\"三雕二塑一铸一画\"（木雕、砖雕、石雕、灰塑、陶塑、铜铁铸和彩绘）著称于世，被誉为\"岭南建筑艺术的明珠\"。作为广东民间工艺博物馆，这里收藏和展示了大量珍贵的民间工艺品。走进陈家祠，仿佛置身于一座艺术殿堂，处处体现了岭南工匠的精湛技艺和匠心独运。",
+          "image": "images/ScreenShot_2025-12-17_101728_612.png",
+          "lat": 23.129560,
+          "lng": 113.241271
+        },
+        {
+          "name": "泮塘五约历史街区",
+          "story_snip": "保留完整的清代古村。",
+          "description": "泮塘五约位于广州市荔湾区荔湾湖公园畔，是广州保存最完整的清代乡村聚落之一，拥有900多年的历史。这里保留了大量的青砖屋、石板路和古老的宗祠，充满了浓郁的西关水乡风情。经过微改造，泮塘五约引入了文创书店、艺术工作室、特色茶馆等现代业态，实现了传统与现代的有机融合。漫步在蜿蜒的巷弄中，既能感受到老广州的市井生活，又能体验到新兴的文化活力，是体验\"老城市新活力\"的典范。",
+          "image": "images/ScreenShot_2025-12-17_101745_586.png",
+          "lat": 23.126311,
+          "lng": 113.229237
+        },
+        {
+          "name": "荔湾湖公园",
+          "story_snip": "一湾溪水绿，两岸荔枝红。",
+          "description": "荔湾湖公园位于广州市荔湾区泮塘地区，是集游览、文体、娱乐、休息为一体的综合性公园。公园以湖泊为主体，由小翠湖、玉翠湖、如意湖、五秀湖组成，通过桥梁和堤岸相连。园内亭台楼阁错落有致，荷花池、荔枝林点缀其中，风景秀丽。这里是著名的\"荔湾渔唱\"发源地，保留了许多岭南传统文化元素。每年春节的水上花市和端午节的龙舟景更是热闹非凡。市民常在此晨练、唱戏、品茶，享受悠闲的西关生活。",
+          "image": "images/ScreenShot_2025-12-17_101808_883.png",
+          "lat": 23.123725,
+          "lng": 113.227299
+        },
+        {
+          "name": "荔湾博物馆",
+          "story_snip": "西关大屋的典型代表。",
+          "description": "荔湾博物馆位于广州市荔湾区龙津西路，成立于1996年，是以收藏、陈列和研究荔湾历史文化、风土民情为主要内容的区级博物馆。博物馆馆址设在民国初期英商汇丰银行买办陈廉伯的旧居内，这是一座具有欧式风格的洋楼。此外，博物馆还包括了西关民俗馆（原蒋光鼐故居），通过复原西关大屋的内部场景，生动展示了清末民初西关富商的生活面貌和传统习俗。这里是了解广州西关文化和建筑艺术的重要窗口。",
+          "image": "images/ScreenShot_2025-12-17_101914_192.png",
+          "lat": 23.122398,
+          "lng": 113.230667
+        },
+        {
+          "name": "永庆坊",
+          "story_snip": "旧城改造典范，李小龙祖居。",
+          "description": "永庆坊位于广州市荔湾区恩宁路，是广州老城微改造的标杆项目。这里保留了广州最完整的骑楼街和西关大屋建筑群，充满了历史沧桑感。改造后的永庆坊引入了非遗工坊、创意市集、网红餐饮和精品民宿，焕发出新的生机。著名的李小龙祖居、粤剧艺术博物馆也坐落于此。游客在这里可以欣赏到传统的粤剧表演，体验广彩、广绣等非遗技艺，品尝地道的西关美食。永庆坊成功实现了\"修旧如旧，建新如故\"，是感受广州老城韵味与现代时尚融合的最佳去处。",
+          "image": "images/ScreenShot_2025-12-17_101950_305.png",
+          "lat": 23.117505,
+          "lng": 113.232170
+        },
+        {
+          "name": "上下九步行街",
+          "story_snip": "传统骑楼商业街。",
+          "description": "上下九步行街位于广州市荔湾区，由上九路、下九路和第十甫路组成，是广州三大传统繁荣商业中心之一。步行街全长1200多米，两侧矗立着连绵不断的骑楼建筑，是中西合璧的岭南建筑典范。这里汇聚了陶陶居、莲香楼、南信牛奶甜品专家等众多百年老字号，是品尝广州传统美食的天堂。步行街上商铺林立，从服装鞋帽到金银首饰应有尽有。热闹的氛围、诱人的美食和独特的建筑，使上下九成为体验广州市井文化和商业繁荣的必游之地。",
+          "image": "images/ScreenShot_2025-12-17_102006_318.png",
+          "lat": 23.116762,
+          "lng": 113.241716
+        },
+        {
+          "name": "粤海关博物馆",
+          "story_snip": "沿江路的历史地标。",
+          "description": "（此点位与沙面路线中的粤海关博物馆重合，作为西关风情线与沿江风景线的交汇点，再次推荐。）粤海关博物馆（大钟楼）不仅是近代建筑的杰作，更是连接西关商业腹地与珠江水运的重要节点。它见证了广州作为通商口岸的繁荣历史，其周边的沿江路也是感受广州江岸风情的好地方。",
+          "image": "images/ScreenShot_2025-12-17_101218_187.png",
+          "lat": 23.109961,
+          "lng": 113.245725
+        }
+      ]
+    }
+    ];
+
+    const MAPBOX_TOKEN = 'pk.eyJ1Ijoicm1rYXYiLCJhIjoiY21pcHpwY2UyMGFrejNlb2d4YjQ1OGJwbiJ9.Du2aq85GHWR9nnz2r_c2bQ';
+
+    createApp({
+        setup() {
+            const routes = ref([]);
+            const savedRoutes = ref([]); 
+            const currentRoute = ref(null);
+            const showSidebar = ref(true);
+            const activeTab = ref('details'); 
+            const activePointIndex = ref(-1); 
+            
+            const isCustomMode = ref(false);
+            const editingOfficial = ref(false); 
+            const editingRouteId = ref(null); 
+            const customRouteName = ref('');
+            const customRouteTheme = ref(''); 
+            const customWaypoints = ref([]);
+            
+            const searchQuery = ref('');
+            const searchSuggestions = ref([]);
+            
+            // 城市搜索相关状态
+            const currentCity = ref('广州');
+            const showCitySelector = ref(false);
+            const cityInput = ref('');
+            
+            // 底图切换相关
+            const showBaseMapSelector = ref(false);
+            const currentMapStyleIndex = ref(1); // 默认 Light
+            const baseMaps = [
+                { name: 'Mapbox 标准', style: 'mapbox://styles/mapbox/streets-v12' },
+                { name: 'Mapbox 极简', style: 'mapbox://styles/mapbox/light-v11' },
+                { name: 'Mapbox 暗黑', style: 'mapbox://styles/mapbox/dark-v11' },
+                { name: 'Mapbox 卫星', style: 'mapbox://styles/mapbox/satellite-v9' },
+                { name: '高德矢量', style: {
+                    version: 8,
+                    sources: {
+                        'gaode-vector': {
+                            type: 'raster',
+                            tiles: ['https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}'],
+                            tileSize: 256
+                        }
+                    },
+                    layers: [{
+                        id: 'gaode-vector-layer',
+                        type: 'raster',
+                        source: 'gaode-vector',
+                        minzoom: 0,
+                        maxzoom: 18
+                    }]
+                }},
+                { name: '高德卫星', style: {
+                    version: 8,
+                    sources: {
+                        'gaode-sat': {
+                            type: 'raster',
+                            tiles: ['https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}'],
+                            tileSize: 256
+                        }
+                    },
+                    layers: [{
+                        id: 'gaode-sat-layer',
+                        type: 'raster',
+                        source: 'gaode-sat',
+                        minzoom: 0,
+                        maxzoom: 18
+                    }]
+                }}
+            ];
+            
+            const navigationSteps = ref([]);
+            const routeDistance = ref(0);
+            const routeDuration = ref(0);
+            
+            // 聚类阈值常量
+            const CLUSTER_ZOOM_THRESHOLD = 12.5;
+            const ROUTE_CLUSTER_ZOOM_THRESHOLD = 11.5; // 路线聚类阈值 (更小比例尺)
+
+            let map = null;
+            let markers = []; 
+            let mapPopups = []; 
+            let activeTooltips = [];
+            let searchMarkers = []; 
+            
+            // 算法可视化层管理
+            let algoLayers = [];
+            let clusterMarkers = []; 
+            
+            let amapAutoComplete = null;
+            let amapPlaceSearch = null;
+            let amapDistrictSearch = null;
+
+            const relocatingIndex = ref(-1);
+            const relocatingMarker = ref(null);
+            let tempNewLocation = null;
+
+            // Lightbox state
+            const lightboxVisible = ref(false);
+            const lightboxImgSrc = ref('');
+
+            onMounted(() => {
+                const localOfficial = localStorage.getItem('officialRoutesOverrides');
+                if (localOfficial) {
+                    try {
+                        const overrides = JSON.parse(localOfficial);
+                        routes.value = ROUTE_DATA.map(r => overrides.find(o => o.route_id === r.route_id) || r);
+                    } catch(e) { routes.value = JSON.parse(JSON.stringify(ROUTE_DATA)); }
+                } else {
+                    routes.value = JSON.parse(JSON.stringify(ROUTE_DATA));
+                }
+
+                const localSaved = localStorage.getItem('myCitywalkRoutes');
+                if (localSaved) {
+                    try { savedRoutes.value = JSON.parse(localSaved); } catch(e) {}
+                }
+
+                preloadImages();
+
+                mapboxgl.accessToken = MAPBOX_TOKEN;
+                map = new mapboxgl.Map({
+                    container: 'map',
+                    style: baseMaps[currentMapStyleIndex.value].style,
+                    center: [113.2644, 23.1291],
+                    zoom: 12.5,
+                    pitch: 0, 
+                });
+
+                map.on('load', () => {
+                    showOverview();
+                    map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
+
+                    map.on('dblclick', (e) => {
+                        if (isCustomMode.value && relocatingIndex.value === -1) {
+                            e.preventDefault();
+                            addCustomPoint(e.lngLat);
+                        }
+                    });
+
+                    map.on('click', (e) => {
+                        searchSuggestions.value = []; 
+                        if (relocatingIndex.value !== -1) handleRelocateClick(e.lngLat);
+                    });
+                    
+                    map.on('zoom', () => {
+                        updateClusters();
+                    });
+                    
+                    if (window.AMap) {
+                        AMap.plugin(['AMap.AutoComplete', 'AMap.PlaceSearch', 'AMap.DistrictSearch'], function(){
+                            amapAutoComplete = new AMap.AutoComplete({ city: currentCity.value });
+                            amapPlaceSearch = new AMap.PlaceSearch({ city: currentCity.value });
+                            amapDistrictSearch = new AMap.DistrictSearch({ subdistrict: 0, extensions: 'base' });
+                        });
+                    }
+                });
+
+                // --- 核心修复：监听底图样式加载完成，自动恢复图层 ---
+                map.on('style.load', () => {
+                    // 如果已经有 route-source，说明是初始化加载或未被清除，跳过
+                    if (map.getSource('route-source')) return;
+
+                    // 1. 如果当前正在浏览路线，重绘路线
+                    if (currentRoute.value) {
+                        drawWalkingRoute(currentRoute.value.waypoints);
+                    } 
+                    // 2. 如果当前是编辑模式，重绘编辑辅助层 (Spline/Hull)
+                    else if (isCustomMode.value) {
+                        refreshCustomMarkers(); // 这会触发 refreshCustomMarkers -> catmullRomSpline -> addSource
+                    }
+                });
+            });
+
+            // 底图切换逻辑
+            const switchBaseMap = (index) => {
+                currentMapStyleIndex.value = index;
+                map.setStyle(baseMaps[index].style);
+                showBaseMapSelector.value = false;
+            };
+
+            // 切换城市逻辑
+            const switchCity = () => {
+                if (!cityInput.value.trim() || !amapDistrictSearch) return;
+                
+                amapDistrictSearch.search(cityInput.value, (status, result) => {
+                    if (status === 'complete' && result.districtList.length > 0) {
+                        const cityData = result.districtList[0];
+                        const center = cityData.center; // GCJ02
+                        const wgsCenter = gcj02towgs84(center.lng, center.lat);
+                        
+                        // 更新状态
+                        currentCity.value = cityData.name;
+                        amapAutoComplete.setCity(cityData.name);
+                        amapPlaceSearch.setCity(cityData.name);
+                        
+                        // 地图飞向新城市
+                        map.flyTo({ center: wgsCenter, zoom: 12 });
+                        
+                        // UI 反馈
+                        showCitySelector.value = false;
+                        cityInput.value = '';
+                        alert(`已切换至城市：${cityData.name}`);
+                    } else {
+                        alert('未找到该城市，请检查输入（例如输入“杭州”或“杭州市”）。');
+                    }
+                });
+            };
+
+            // 聚类算法更新逻辑
+            const updateClusters = () => {
+                clusterMarkers.forEach(m => m.remove());
+                clusterMarkers = [];
+                
+                const zoom = map.getZoom();
+                
+                // 情况1：详情/编辑模式下的点位聚类 (黄色)
+                if (currentRoute.value || isCustomMode.value) {
+                    let points = isCustomMode.value ? customWaypoints.value : currentRoute.value.waypoints;
+                    
+                    if (zoom < CLUSTER_ZOOM_THRESHOLD && points.length > 3) {
+                        const k = Math.max(1, Math.floor(points.length / (15 - zoom)));
+                        const result = kMeans(points, k);
+                        if (!result) return;
+                        
+                        markers.forEach(m => m.getElement().style.display = 'none');
+                        
+                        result.centroids.forEach((c, idx) => {
+                            const count = result.assignments.filter(a => a === idx).length;
+                            if (count === 0) return;
+
+                            const el = document.createElement('div');
+                            el.className = 'marker-cluster-inner';
+                            el.innerText = count;
+                            
+                            el.addEventListener('click', () => {
+                                map.flyTo({ center: [c.lng, c.lat], zoom: 15 });
+                            });
+                            
+                            const marker = new mapboxgl.Marker(el)
+                                .setLngLat([c.lng, c.lat])
+                                .addTo(map);
+                            clusterMarkers.push(marker);
+                        });
+                    } else {
+                        markers.forEach(m => m.getElement().style.display = '');
+                    }
+                } 
+                // 情况2：概览模式下的路线起点聚类 (紫色) - 新功能
+                else {
+                    const allRoutes = [...routes.value, ...savedRoutes.value];
+                    if (allRoutes.length === 0) return;
+
+                    // 收集所有路线的“重心”作为聚类输入
+                    const routeCenters = allRoutes.map(r => {
+                        let lngSum = 0, latSum = 0;
+                        r.waypoints.forEach(wp => { lngSum += wp.lng; latSum += wp.lat; });
+                        return { 
+                            lng: lngSum / r.waypoints.length, 
+                            lat: latSum / r.waypoints.length,
+                            id: r.route_id 
+                        };
+                    });
+
+                    if (zoom < ROUTE_CLUSTER_ZOOM_THRESHOLD && routeCenters.length > 3) {
+                        // 计算 K 值
+                        const k = Math.max(1, Math.floor(routeCenters.length / 3)); 
+                        const result = kMeans(routeCenters, k);
+                        if (!result) return;
+
+                        // 隐藏原始路线标记
+                        markers.forEach(m => m.getElement().style.display = 'none');
+
+                        // 显示路线聚类标记 (紫色)
+                        result.centroids.forEach((c, idx) => {
+                            const count = result.assignments.filter(a => a === idx).length;
+                            if (count === 0) return;
+
+                            const el = document.createElement('div');
+                            el.className = 'marker-cluster-route-inner'; // 使用紫色样式
+                            el.innerText = count;
+                            
+                            el.addEventListener('click', () => {
+                                map.flyTo({ center: [c.lng, c.lat], zoom: 12.5 });
+                            });
+                            
+                            const marker = new mapboxgl.Marker(el)
+                                .setLngLat([c.lng, c.lat])
+                                .addTo(map);
+                            clusterMarkers.push(marker);
+                        });
+                    } else {
+                        markers.forEach(m => m.getElement().style.display = '');
+                    }
+                }
+            };
+
+
+            const preloadImages = () => {
+                const imagesToLoad = [];
+                ROUTE_DATA.forEach(route => {
+                    route.waypoints.forEach(wp => {
+                        if (wp.image && !wp.image.includes('【')) imagesToLoad.push(wp.image);
+                    });
+                });
+                savedRoutes.value.forEach(route => {
+                    route.waypoints.forEach(wp => {
+                        if (wp.image && !wp.image.includes('【')) imagesToLoad.push(wp.image);
+                    });
+                });
+                imagesToLoad.forEach(src => {
+                    const img = new Image();
+                    img.src = src;
+                });
+            };
+
+            const openLightbox = (src) => {
+                if (src && !src.includes('【')) {
+                    lightboxImgSrc.value = src;
+                    lightboxVisible.value = true;
+                }
+            };
+
+            const closeLightbox = () => {
+                lightboxVisible.value = false;
+                lightboxImgSrc.value = '';
+            };
+
+            const resetToFactorySettings = () => {
+                const msg = "【系统提示】\n\n您即将执行“恢复出厂设置”操作。\n\n此操作将清除浏览器中保存的所有本地数据（包括自定义路线、官方路线的修改记录等），并将页面重置为初始状态。\n\n该操作不可撤销。是否确认继续？";
+                if (confirm(msg)) {
+                    localStorage.removeItem('officialRoutesOverrides');
+                    localStorage.removeItem('myCitywalkRoutes');
+                    location.reload();
+                }
+            };
+
+            const handleSearchInput = () => {
+                if (!searchQuery.value || !amapAutoComplete) {
+                    searchSuggestions.value = [];
+                    return;
+                }
+                amapAutoComplete.search(searchQuery.value, (status, result) => {
+                    if (status === 'complete' && result.tips) {
+                        searchSuggestions.value = result.tips.filter(tip => tip.location); 
+                    } else {
+                        searchSuggestions.value = [];
+                    }
+                });
+            };
+
+            const selectSuggestion = (item) => {
+                searchQuery.value = item.name;
+                searchSuggestions.value = [];
+                const wgsCoords = gcj02towgs84(item.location.lng, item.location.lat);
+                
+                if (isCustomMode.value) {
+                    addCustomPoint({ lng: wgsCoords[0], lat: wgsCoords[1] }, item.name);
+                    map.flyTo({ center: wgsCoords, zoom: 16 });
+                } else {
+                    map.flyTo({ center: wgsCoords, zoom: 16 });
+                    addSearchResultMarker(wgsCoords, item.name);
+                }
+            };
+
+            const addSearchResultMarker = (lngLat, text) => {
+                searchMarkers.forEach(m => m.remove());
+                searchMarkers = [];
+
+                const el = document.createElement('div');
+                el.className = 'marker-container';
+                el.innerHTML = `<div class="marker-search-inner"></div>`;
+                
+                const popupContent = document.createElement('div');
+                popupContent.innerHTML = `
+                    <div class="font-bold p-2 pr-6 relative">
+                        ${text}
+                        <div class="popup-delete-btn" title="删除标记">×</div>
+                    </div>
+                `;
+                
+                const deleteBtn = popupContent.querySelector('.popup-delete-btn');
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    searchMarkers.forEach(m => m.remove());
+                    searchMarkers = [];
+                });
+
+                const popup = new mapboxgl.Popup({ offset: 15, closeButton: false, closeOnClick: false })
+                    .setDOMContent(popupContent);
+                
+                const marker = new mapboxgl.Marker(el)
+                    .setLngLat(lngLat)
+                    .setPopup(popup)
+                    .addTo(map);
+                
+                marker.togglePopup(); 
+                searchMarkers.push(marker);
+            };
+
+            const clearMapLayer = () => {
+                if (map.getLayer('route-line')) map.removeLayer('route-line');
+                if (map.getSource('route-source')) map.removeSource('route-source');
+                if (map.getLayer('route-connectors')) map.removeLayer('route-connectors');
+                if (map.getSource('connector-source')) map.removeSource('connector-source');
+                
+                clearAlgoLayers();
+                
+                clusterMarkers.forEach(m => m.remove());
+                clusterMarkers = [];
+
+                markers.forEach(m => m.remove());
+                markers = [];
+                mapPopups.forEach(p => p.remove()); 
+                mapPopups = [];
+                activeTooltips.forEach(t => t.remove());
+                activeTooltips = [];
+                searchMarkers.forEach(m => m.remove());
+                searchMarkers = [];
+                navigationSteps.value = [];
+                activePointIndex.value = -1;
+                
+                if(relocatingMarker.value) { relocatingMarker.value.remove(); relocatingMarker.value = null; }
+            };
+            
+            const clearAlgoLayers = () => {
+                const layers = ['algo-spline-line', 'algo-hull-fill', 'algo-hull-line'];
+                const sources = ['algo-spline-source', 'algo-hull-source'];
+                
+                layers.forEach(l => { if(map.getLayer(l)) map.removeLayer(l); });
+                sources.forEach(s => { if(map.getSource(s)) map.removeSource(s); });
+            };
+
+            const showOverview = () => {
+                clearMapLayer();
+                currentRoute.value = null;
+                activeTab.value = 'details';
+                map.flyTo({ center: [113.2644, 23.1291], zoom: 12, pitch: 0 });
+                routes.value.forEach(route => createStartMarker(route, 'official'));
+                savedRoutes.value.forEach(route => createStartMarker(route, 'custom'));
+            };
+
+            const createStartMarker = (route, type) => {
+                let lngSum = 0, latSum = 0;
+                route.waypoints.forEach(wp => { lngSum += wp.lng; latSum += wp.lat; });
+                const center = [lngSum / route.waypoints.length, latSum / route.waypoints.length];
+
+                const el = document.createElement('div');
+                el.className = 'marker-container';
+                el.innerHTML = type === 'official' 
+                    ? `<div class="marker-start-inner"></div>`
+                    : `<div class="marker-custom-start-inner"></div>`;
+                
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    selectRoute(route);
+                });
+
+                const tooltip = new mapboxgl.Popup({ offset: 15, closeButton: false, closeOnClick: false })
+                    .setHTML(`<div class="font-bold text-xs p-1">${route.route_name}</div>`);
+                el.addEventListener('mouseenter', () => { tooltip.setLngLat(center).addTo(map); activeTooltips.push(tooltip); });
+                el.addEventListener('mouseleave', () => { tooltip.remove(); activeTooltips = activeTooltips.filter(t => t !== tooltip); });
+
+                const marker = new mapboxgl.Marker(el).setLngLat(center).addTo(map);
+                markers.push(marker);
+            };
+
+            const selectRoute = async (route) => {
+                if (isCustomMode.value) return; 
+                clearMapLayer();
+                currentRoute.value = route;
+                activeTab.value = 'details';
+
+                const bounds = new mapboxgl.LngLatBounds();
+                route.waypoints.forEach((wp, index) => {
+                    const el = document.createElement('div');
+                    el.className = 'marker-container';
+                    el.innerHTML = `<div class="marker-waypoint-inner"></div>`;
+                    
+                    const popupHTML = `<div class="p-1">
+                        <div class="font-bold text-sm mb-1">${index + 1}. ${wp.name}</div>
+                        <div class="text-xs text-gray-500">${wp.story_snip || wp.note || ''}</div>
+                    </div>`;
+
+                    const popup = new mapboxgl.Popup({ offset: 15, closeButton: false, className: 'apple-popup' }).setHTML(popupHTML);
+
+                    el.addEventListener('click', () => flyToPointAndPopup(index)); 
+
+                    const marker = new mapboxgl.Marker(el).setLngLat([wp.lng, wp.lat]).setPopup(popup).addTo(map);
+                    
+                    markers.push(marker);
+                    mapPopups.push(popup); 
+                    bounds.extend([wp.lng, wp.lat]);
+                });
+
+                // --- 修改：利用 Convex Hull 计算范围，并增加左侧避让 padding ---
+                if (route.waypoints.length >= 3) {
+                     const hullPoints = convexHull(route.waypoints);
+                     const hullBounds = new mapboxgl.LngLatBounds();
+                     hullPoints.forEach(p => hullBounds.extend(p));
+                     
+                     // 关键修改：增加 left padding 避免被侧边栏遮挡
+                     const padding = window.innerWidth >= 768 
+                        ? { top: 100, bottom: 100, left: 420, right: 100 } // 左侧 420px，避让侧边栏
+                        : { top: 50, bottom: 50, left: 50, right: 50 };
+                     
+                     map.fitBounds(hullBounds, { padding, maxZoom: 16 });
+                } else {
+                     map.fitBounds(bounds, { padding: { top: 100, bottom: 100, left: 400, right: 100 }, maxZoom: 16 });
+                }
+                
+                if (window.innerWidth < 768) map.fitBounds(bounds, { padding: 50 });
+
+                drawWalkingRoute(route.waypoints);
+            };
+
+            const flyToPointAndPopup = (index) => {
+                activePointIndex.value = index;
+                const itemId = isCustomMode.value ? 'edit-item-' + index : 'waypoint-item-' + index;
+                
+                nextTick(() => {
+                    const item = document.getElementById(itemId);
+                    if(item) item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                });
+
+                const marker = markers[index];
+                const popup = mapPopups[index];
+                const point = isCustomMode.value ? customWaypoints.value[index] : currentRoute.value.waypoints[index];
+
+                if (marker && point) {
+                    map.flyTo({ center: [point.lng, point.lat], zoom: 17, pitch: 50 });
+                    
+                    document.querySelectorAll('.marker-container').forEach(m => {
+                        m.classList.remove('active');
+                        m.classList.remove('active-edit');
+                    });
+                    
+                    if (isCustomMode.value) {
+                         marker.getElement().classList.add('active-edit');
+                    } else {
+                         marker.getElement().classList.add('active');
+                    }
+                    
+                    popup.addTo(map);
+                }
+            };
+
+            const drawWalkingRoute = async (points) => {
+                if (points.length < 2) return;
+                
+                if (map.getLayer('algo-spline-line')) map.removeLayer('algo-spline-line');
+                if (map.getSource('algo-spline-source')) map.removeSource('algo-spline-source');
+
+                const coordString = points.map(p => `${p.lng},${p.lat}`).join(';');
+                const url = `https://api.mapbox.com/directions/v5/mapbox/walking/${coordString}?steps=true&geometries=geojson&access_token=${MAPBOX_TOKEN}&language=zh-Hans`;
+
+                try {
+                    const res = await fetch(url);
+                    const data = await res.json();
+                    
+                    if (!data.routes || data.routes.length === 0) return;
+                    const route = data.routes[0];
+                    const geometry = route.geometry;
+
+                    const layers = map.getStyle().layers;
+                    const labelLayerId = layers.find(l => l.type === 'symbol' && l.layout['text-field'])?.id;
+
+                    if (map.getSource('route-source')) {
+                        map.getSource('route-source').setData(geometry);
+                    } else {
+                        map.addSource('route-source', { 'type': 'geojson', 'data': geometry });
+                        map.addLayer({
+                            'id': 'route-line',
+                            'type': 'line',
+                            'source': 'route-source',
+                            'layout': { 'line-join': 'round', 'line-cap': 'round' },
+                            'paint': { 'line-color': '#007AFF', 'line-width': 6, 'line-opacity': 0.7 } 
+                        }, labelLayerId);
+                    }
+
+                    const connectors = { type: 'FeatureCollection', features: [] };
+                    if(data.waypoints && data.waypoints.length === points.length) {
+                        data.waypoints.forEach((snappedWp, idx) => {
+                            connectors.features.push({
+                                type: 'Feature',
+                                geometry: {
+                                    type: 'LineString',
+                                    coordinates: [ [points[idx].lng, points[idx].lat], snappedWp.location ]
+                                }
+                            });
+                        });
+                        if (map.getSource('connector-source')) {
+                            map.getSource('connector-source').setData(connectors);
+                        } else {
+                            map.addSource('connector-source', { 'type': 'geojson', 'data': connectors });
+                            map.addLayer({
+                                'id': 'route-connectors',
+                                'type': 'line',
+                                'source': 'connector-source',
+                                'layout': { 'line-join': 'round', 'line-cap': 'round' },
+                                'paint': { 'line-color': '#8E8E93', 'line-width': 2, 'line-dasharray': [2, 2], 'line-opacity': 0.6 }
+                            });
+                        }
+                    }
+
+                    navigationSteps.value = [];
+                    routeDistance.value = route.distance;
+                    routeDuration.value = route.duration;
+                    route.legs.forEach(leg => leg.steps.forEach(step => step.maneuver.type !== 'arrive' && navigationSteps.value.push(step)));
+                } catch (err) { console.error("Route Error", err); }
+            };
+            
+            const toggleCustomMode = () => {
+                isCustomMode.value = !isCustomMode.value;
+                if (isCustomMode.value) {
+                    clearMapLayer();
+                    if (!editingRouteId.value) {
+                        currentRoute.value = null;
+                        if(customWaypoints.value.length === 0) {
+                            customRouteName.value = '';
+                            customRouteTheme.value = '';
+                        }
+                    } else {
+                        refreshCustomMarkers();
+                    }
+                } else {
+                    customWaypoints.value = []; 
+                    editingOfficial.value = false;
+                    editingRouteId.value = null;
+                    customRouteTheme.value = '';
+                    showOverview(); 
+                }
+            };
+            
+            const editSavedRoute = (index) => {
+                const routeToEdit = savedRoutes.value[index];
+                customWaypoints.value = JSON.parse(JSON.stringify(routeToEdit.waypoints));
+                customRouteName.value = routeToEdit.route_name;
+                customRouteTheme.value = routeToEdit.theme;
+                
+                editingOfficial.value = false;
+                editingRouteId.value = routeToEdit.route_id; 
+                
+                isCustomMode.value = true;
+                clearMapLayer();
+                currentRoute.value = null;
+                refreshCustomMarkers();
+            };
+
+            const editOfficialRoute = (index) => {
+                const route = routes.value[index];
+                customWaypoints.value = JSON.parse(JSON.stringify(route.waypoints));
+                customRouteName.value = route.route_name;
+                customRouteTheme.value = route.theme; 
+                
+                editingOfficial.value = true;
+                editingRouteId.value = route.route_id;
+                
+                isCustomMode.value = true;
+                clearMapLayer();
+                currentRoute.value = null;
+                refreshCustomMarkers();
+            };
+
+            const saveCustomRoute = () => {
+                if (customWaypoints.value.length < 2) { alert("保存失败：至少需要2个点位"); return; }
+                
+                try {
+                    if (!editingRouteId.value) {
+                        editingRouteId.value = 'custom-' + Date.now();
+                    }
+                    
+                    let finalTheme = customRouteTheme.value;
+                    if (!finalTheme) {
+                        finalTheme = editingOfficial.value ? '' : ('自由探索 · ' + new Date().toLocaleDateString());
+                    }
+
+                    const newRoute = {
+                        route_id: editingRouteId.value,
+                        route_name: customRouteName.value || '我的自定义漫步',
+                        theme: finalTheme, 
+                        waypoints: JSON.parse(JSON.stringify(customWaypoints.value)) 
+                    };
+
+                    if (editingOfficial.value) {
+                        const idx = routes.value.findIndex(r => r.route_id === newRoute.route_id);
+                        if (idx !== -1) routes.value[idx] = newRoute;
+                        
+                        const currentOverrides = JSON.parse(localStorage.getItem('officialRoutesOverrides') || '[]');
+                        const filtered = currentOverrides.filter(o => o.route_id !== newRoute.route_id);
+                        filtered.push(newRoute);
+                        localStorage.setItem('officialRoutesOverrides', JSON.stringify(filtered));
+                    } else {
+                        const idx = savedRoutes.value.findIndex(r => r.route_id === newRoute.route_id);
+                        if (idx !== -1) {
+                            savedRoutes.value[idx] = newRoute;
+                        } else {
+                            savedRoutes.value.push(newRoute);
+                        }
+                        localStorage.setItem('myCitywalkRoutes', JSON.stringify(savedRoutes.value));
+                    }
+
+                    alert('路线保存成功！');
+                    
+                    isCustomMode.value = false;
+                    editingOfficial.value = false;
+                    editingRouteId.value = null;
+                    customWaypoints.value = []; 
+                    clearMapLayer();
+                    showOverview();
+                } catch (e) {
+                    console.error(e);
+                    alert('保存失败：可能是图片太大超出了浏览器限制。');
+                }
+            };
+
+            const exportAllData = () => {
+                const data = {
+                    official_overrides: JSON.parse(localStorage.getItem('officialRoutesOverrides') || '[]'),
+                    custom_routes: savedRoutes.value
+                };
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = "my_citywalk_data.json";
+                a.click();
+            };
+
+            const addCustomPoint = (lngLat, nameOverride = null) => {
+                const newPoint = { id: Date.now(), name: nameOverride || `点位 ${customWaypoints.value.length + 1}`, note: '', description: '', image: null, lng: lngLat.lng, lat: lngLat.lat };
+                customWaypoints.value.push(newPoint);
+                refreshCustomMarkers();
+                flyToPointAndPopup(customWaypoints.value.length - 1);
+            };
+            const removeCustomPoint = (index) => { customWaypoints.value.splice(index, 1); refreshCustomMarkers(); };
+            const movePoint = (index, direction) => {
+                const newIndex = index + direction;
+                if (newIndex >= 0 && newIndex < customWaypoints.value.length) {
+                    [customWaypoints.value[index], customWaypoints.value[newIndex]] = [customWaypoints.value[newIndex], customWaypoints.value[index]];
+                    refreshCustomMarkers();
+                }
+            };
+            
+            const handleImageUpload = (event, waypoint) => {
+                const file = event.target.files[0];
+                if (!file) return;
+                
+                if (file.size > 3 * 1024 * 1024) { alert("图片太大，请选择 3MB 以下的图片"); return; }
+
+                const reader = new FileReader();
+                reader.onload = (e) => { 
+                    const img = new Image();
+                    img.src = e.target.result;
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        const maxWidth = 800; 
+                        let w = img.width;
+                        let h = img.height;
+                        if (w > maxWidth) { h *= maxWidth / w; w = maxWidth; }
+                        canvas.width = w; canvas.height = h;
+                        ctx.drawImage(img, 0, 0, w, h);
+                        waypoint.image = canvas.toDataURL('image/jpeg', 0.7); 
+                    };
+                };
+                reader.readAsDataURL(file);
+            };
+            const startRelocatePoint = (index) => {
+                relocatingIndex.value = index;
+                const wp = customWaypoints.value[index];
+                tempNewLocation = { lng: wp.lng, lat: wp.lat };
+                if (relocatingMarker.value) relocatingMarker.value.remove();
+                const el = document.createElement('div'); el.className = 'marker-container'; el.innerHTML = `<div class="marker-dragging-inner"></div>`;
+                relocatingMarker.value = new mapboxgl.Marker(el).setLngLat([wp.lng, wp.lat]).addTo(map);
+                map.flyTo({ center: [wp.lng, wp.lat], zoom: 16 });
+            };
+            const handleRelocateClick = (lngLat) => {
+                tempNewLocation = { lng: lngLat.lng, lat: lngLat.lat };
+                if (relocatingMarker.value) relocatingMarker.value.setLngLat(lngLat);
+            };
+            const confirmRelocate = () => {
+                if (relocatingIndex.value !== -1 && tempNewLocation) {
+                    const wp = customWaypoints.value[relocatingIndex.value];
+                    wp.lng = tempNewLocation.lng; wp.lat = tempNewLocation.lat;
+                    cancelRelocate();
+                    refreshCustomMarkers();
+                }
+            };
+            const cancelRelocate = () => {
+                relocatingIndex.value = -1;
+                if (relocatingMarker.value) { relocatingMarker.value.remove(); relocatingMarker.value = null; }
+            };
+            
+            const refreshCustomMarkers = () => {
+                markers.forEach(m => m.remove()); markers = [];
+                mapPopups.forEach(p => p.remove()); mapPopups = []; 
+
+                customWaypoints.value.forEach((wp, idx) => {
+                     const el = document.createElement('div'); el.className = 'marker-container'; el.innerHTML = `<div class="marker-inner-anim marker-editing-inner"></div>`;
+                     
+                     const popupHTML = `<div class="p-1">
+                        <div class="font-bold text-sm mb-1">${idx + 1}. ${wp.name}</div>
+                        <div class="text-xs text-gray-500">${wp.note || ''}</div>
+                    </div>`;
+                     const popup = new mapboxgl.Popup({ offset: 15, closeButton: false, className: 'apple-popup' }).setHTML(popupHTML);
+                     
+                     el.addEventListener('click', (e) => {
+                         e.stopPropagation(); 
+                         flyToPointAndPopup(idx);
+                     });
+
+                     const m = new mapboxgl.Marker(el).setLngLat([wp.lng, wp.lat]).setPopup(popup).addTo(map);
+                     markers.push(m);
+                     mapPopups.push(popup); 
+                });
+
+                // Catmull-Rom 实时样条插值
+                if (customWaypoints.value.length >= 2) {
+                    const smoothPoints = catmullRomSpline(customWaypoints.value);
+                    
+                    if (map.getSource('algo-spline-source')) {
+                         map.getSource('algo-spline-source').setData({
+                            'type': 'Feature',
+                            'properties': {},
+                            'geometry': { 'type': 'LineString', 'coordinates': smoothPoints }
+                        });
+                    } else {
+                        map.addSource('algo-spline-source', {
+                            'type': 'geojson',
+                            'data': {
+                                'type': 'Feature',
+                                'properties': {},
+                                'geometry': { 'type': 'LineString', 'coordinates': smoothPoints }
+                            }
+                        });
+                        map.addLayer({
+                            'id': 'algo-spline-line',
+                            'type': 'line',
+                            'source': 'algo-spline-source',
+                            'layout': { 'line-join': 'round', 'line-cap': 'round' },
+                            'paint': { 
+                                'line-color': '#8B5CF6', 
+                                'line-width': 4,
+                                'line-dasharray': [2, 1] 
+                            }
+                        });
+                    }
+                }
+
+                updateClusters();
+            };
+
+            const generateCustomRoutePreview = async () => {
+                if (customWaypoints.value.length < 2) return;
+                await drawWalkingRoute(customWaypoints.value);
+            };
+            const deleteSavedRoute = (index) => {
+                if (confirm('确定删除这条路线吗？')) {
+                    savedRoutes.value.splice(index, 1);
+                    localStorage.setItem('myCitywalkRoutes', JSON.stringify(savedRoutes.value));
+                    showOverview();
+                }
+            };
+            const exitRoute = () => showOverview();
+            const getTurnIconClass = (modifier) => {
+                if (!modifier) return '';
+                if (modifier.includes('right')) return 'step-icon-turn-right';
+                if (modifier.includes('left')) return 'step-icon-turn-left';
+                if (modifier.includes('uturn')) return 'step-icon-uturn';
+                return '';
+            };
+
+            return {
+                routes, savedRoutes, currentRoute, showSidebar, activeTab, activePointIndex,
+                isCustomMode, editingOfficial, customWaypoints, customRouteName,
+                searchQuery, searchSuggestions,
+                navigationSteps, routeDistance, routeDuration,
+                relocatingIndex, startRelocatePoint, confirmRelocate, cancelRelocate,
+                selectRoute, exitRoute, flyToPointAndPopup,
+                toggleCustomMode, removeCustomPoint, generateCustomRoutePreview, saveCustomRoute, deleteSavedRoute, editSavedRoute, editOfficialRoute,
+                movePoint, handleImageUpload, addCustomPoint, exportAllData,
+                resetToFactorySettings, 
+                getTurnIconClass, handleSearchInput, selectSuggestion,
+                // Lightbox
+                lightboxVisible, lightboxImgSrc, openLightbox, closeLightbox,
+                // City Switcher
+                currentCity, showCitySelector, cityInput, switchCity,
+                // BaseMap Switcher
+                showBaseMapSelector, baseMaps, currentMapStyleIndex, switchBaseMap
+            };
+        }
+    }).mount('#app');
+</script>
+
+</body>
+</html>
