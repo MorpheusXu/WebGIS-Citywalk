@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>广州 Citywalk 探索地图</title>
+    <title>城市 Citywalk 探索地图</title>
     
     <!-- 1. 高德地图安全密钥配置 -->
     <script type="text/javascript">
         window._AMapSecurityConfig = {
-            securityJsCode: '4ad752191a1c13e1cf88afc15331a86f', // 您的安全密钥
+            securityJsCode: '4ad752191a1c13e1cf88afc15331a86f', 
         };
     </script>
-    <!-- 2. 加载高德地图 JS API (新增 DistrictSearch 插件) -->
+    <!-- 2. 加载高德地图 JS API (DistrictSearch 插件) -->
     <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=c57cf8a4b95a1847b6d064a92386765e&plugin=AMap.AutoComplete,AMap.PlaceSearch,AMap.DistrictSearch"></script>
 
     <!-- Mapbox 样式 -->
@@ -22,6 +22,8 @@
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <!-- Mapbox JS -->
     <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+    <!-- Axios -->
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     
     <style>
         body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; overflow: hidden; }
@@ -234,7 +236,7 @@
                 @input="handleSearchInput"
                 type="text" 
                 class="block w-full pl-10 pr-16 py-3 border-none rounded-xl leading-5 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-all" 
-                :placeholder="'搜 '+ currentCity +' 地点 (如: ' + (currentCity==='广州' ? '天环广场' : '地标名称') + ')'"
+                :placeholder="'搜 '+ currentCity +' 地点'"
             >
             <button class="absolute right-2 top-1.5 bottom-1.5 px-3 bg-blue-500 text-white rounded-lg text-xs font-bold hover:bg-blue-600 transition-colors">
                 搜索
@@ -271,7 +273,7 @@
             </div>
         </div>
 
-        <!-- 底图切换器 (新增) -->
+        <!-- 底图切换器 -->
         <div class="relative">
             <button @click="showBaseMapSelector = !showBaseMapSelector; showCitySelector = false;" class="bg-white/90 backdrop-blur p-2 rounded-lg shadow-md text-gray-600 hover:text-blue-600 transition-all border border-gray-200" title="切换地图风格">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>
@@ -546,6 +548,121 @@
 
 <script>
     const { createApp, ref, onMounted, nextTick } = Vue;
+
+    // ==========================================
+    // Axios 统一封装类 (新增功能 1)
+    // ==========================================
+    class AxiosRequest {
+        constructor() {
+            // 存储 pending 的请求，用于取消重复请求
+            this.pendingMap = new Map();
+            
+            // 创建 Axios 实例
+            this.instance = axios.create({
+                timeout: 10000, // 10秒超时
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            // 请求拦截器
+            this.instance.interceptors.request.use(
+                config => {
+                    this.removePending(config); // 取消重复请求
+                    this.addPending(config);    // 添加当前请求到队列
+                    
+                    // Token 校验 (模拟)
+                    const token = localStorage.getItem('token');
+                    if (token) {
+                        config.headers.Authorization = `Bearer ${token}`;
+                    }
+                    return config;
+                },
+                error => Promise.reject(error)
+            );
+
+            // 响应拦截器
+            this.instance.interceptors.response.use(
+                response => {
+                    this.removePending(response.config); // 请求完成，移除队列
+                    return response;
+                },
+                error => {
+                    if (axios.isCancel(error)) {
+                        console.log('Request canceled:', error.message);
+                        return Promise.reject(error);
+                    }
+                    
+                    const config = error.config;
+                    // 如果被取消或没有配置重试，直接返回错误
+                    if (!config || !config.retry) {
+                        if (config) this.removePending(config);
+                        return Promise.reject(error);
+                    }
+                    
+                    // 移除 pending 状态，准备重试
+                    this.removePending(config);
+
+                    // 初始化重试计数
+                    config.__retryCount = config.__retryCount || 0;
+
+                    // 检查是否超过最大重试次数
+                    if (config.__retryCount >= config.retry) {
+                        return Promise.reject(error);
+                    }
+
+                    // 增加重试计数
+                    config.__retryCount += 1;
+
+                    // 创建延时 Promise
+                    const backoff = new Promise(resolve => {
+                        setTimeout(() => resolve(), config.retryDelay || 1000);
+                    });
+
+                    // 延时后重新发起请求
+                    return backoff.then(() => this.instance(config));
+                }
+            );
+        }
+
+        // 生成请求唯一 Key
+        getGenerateKey(config) {
+            const { method, url, params, data } = config;
+            return [method, url, JSON.stringify(params), JSON.stringify(data)].join('&');
+        }
+
+        // 添加请求到队列
+        addPending(config) {
+            const key = this.getGenerateKey(config);
+            const controller = new AbortController();
+            config.signal = controller.signal;
+            if (!this.pendingMap.has(key)) {
+                this.pendingMap.set(key, controller);
+            }
+        }
+
+        // 移除请求并取消
+        removePending(config) {
+            const key = this.getGenerateKey(config);
+            if (this.pendingMap.has(key)) {
+                const controller = this.pendingMap.get(key);
+                controller.abort();
+                this.pendingMap.delete(key);
+            }
+        }
+
+        // 封装 GET 方法
+        get(url, config = {}) {
+            return this.instance.get(url, config);
+        }
+
+        // 封装 POST 方法
+        post(url, data, config = {}) {
+            return this.instance.post(url, data, config);
+        }
+    }
+
+    // 实例化全局请求对象
+    const http = new AxiosRequest();
+
 
     // ==========================================
     // 核心算法库 (高含金量部分)
@@ -1018,44 +1135,10 @@
             const showBaseMapSelector = ref(false);
             const currentMapStyleIndex = ref(1); // 默认 Light
             const baseMaps = [
-                { name: 'Mapbox 标准', style: 'mapbox://styles/mapbox/streets-v12' },
-                { name: 'Mapbox 极简', style: 'mapbox://styles/mapbox/light-v11' },
-                { name: 'Mapbox 暗黑', style: 'mapbox://styles/mapbox/dark-v11' },
-                { name: 'Mapbox 卫星', style: 'mapbox://styles/mapbox/satellite-v9' },
-                { name: '高德矢量', style: {
-                    version: 8,
-                    sources: {
-                        'gaode-vector': {
-                            type: 'raster',
-                            tiles: ['https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}'],
-                            tileSize: 256
-                        }
-                    },
-                    layers: [{
-                        id: 'gaode-vector-layer',
-                        type: 'raster',
-                        source: 'gaode-vector',
-                        minzoom: 0,
-                        maxzoom: 18
-                    }]
-                }},
-                { name: '高德卫星', style: {
-                    version: 8,
-                    sources: {
-                        'gaode-sat': {
-                            type: 'raster',
-                            tiles: ['https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}'],
-                            tileSize: 256
-                        }
-                    },
-                    layers: [{
-                        id: 'gaode-sat-layer',
-                        type: 'raster',
-                        source: 'gaode-sat',
-                        minzoom: 0,
-                        maxzoom: 18
-                    }]
-                }}
+                { name: '标准', style: 'mapbox://styles/mapbox/streets-v12' },
+                { name: '极简', style: 'mapbox://styles/mapbox/light-v11' },
+                { name: '暗黑', style: 'mapbox://styles/mapbox/dark-v11' },
+                { name: '卫星', style: 'mapbox://styles/mapbox/satellite-v9' }
             ];
             
             const navigationSteps = ref([]);
@@ -1234,7 +1317,7 @@
                         markers.forEach(m => m.getElement().style.display = '');
                     }
                 } 
-                // 情况2：概览模式下的路线起点聚类 (紫色) - 新功能
+                // 情况2：概览模式下的路线起点聚类 (紫色)
                 else {
                     const allRoutes = [...routes.value, ...savedRoutes.value];
                     if (allRoutes.length === 0) return;
@@ -1543,8 +1626,9 @@
                 const url = `https://api.mapbox.com/directions/v5/mapbox/walking/${coordString}?steps=true&geometries=geojson&access_token=${MAPBOX_TOKEN}&language=zh-Hans`;
 
                 try {
-                    const res = await fetch(url);
-                    const data = await res.json();
+                    // 使用封装的 http 类替代原生 fetch，并启用重试机制
+                    const res = await http.get(url, { retry: 3, retryDelay: 1000 });
+                    const data = res.data;
                     
                     if (!data.routes || data.routes.length === 0) return;
                     const route = data.routes[0];
